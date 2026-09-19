@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sistema Hospitalario - Gestión de Citas</title>
+  <link href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.10/index.global.min.css" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.10/index.global.min.js"></script>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 20px; background-color: #f3f4f6; }
+    .container { max-width: 1200px; margin: auto; background: #ffffff; padding: 24px; border-radius: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.06); }
+    .header-bar { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px; margin-bottom: 20px; }
+    .filter-group { display: flex; align-items: center; gap: 10px; font-weight: 600; }
+    select, input, textarea, button { padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px; }
+    button { cursor: pointer; }
+    .btn-primary { background: #2563eb; color: white; border: none; }
+    .btn-primary:hover { background: #1d4ed8; }
+    .btn-secondary { background: #6b7280; color: white; border: none; }
+    
+    /* Colores oficiales por estado RQF-10 */
+    .estado-pendiente { background-color: #eab308 !important; border-color: #ca8a04 !important; color: #000 !important; }
+    .estado-confirmada { background-color: #3b82f6 !important; border-color: #2563eb !important; color: #fff !important; }
+    .estado-atendida { background-color: #22c55e !important; border-color: #16a34a !important; color: #fff !important; }
+    .estado-cancelada { background-color: #ef4444 !important; border-color: #dc2626 !important; color: #fff !important; text-decoration: line-through; }
+
+    /* Ventanas Modales */
+    .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); justify-content: center; align-items: center; z-index: 999; }
+    .modal-card { background: white; padding: 24px; border-radius: 8px; width: 380px; max-width: 90%; }
+    .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 15px; }
+    .form-group { margin-bottom: 12px; }
+    .form-group label { display: block; font-size: 13px; font-weight: bold; margin-bottom: 4px; }
+    .form-group select, .form-group input { width: 100%; box-sizing: border-box; }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <div class="header-bar">
+    <h2>Control de Citas Médicas</h2>
+    <div class="filter-group">
+      <label for="filtroDoctor">Doctor:</label>
+      <select id="filtroDoctor" onchange="calendar.refetchEvents()">
+        <option value="">Todos los doctores</option>
+      </select>
+    </div>
+  </div>
+
+  <div id="calendar"></div>
+</div>
+
+<!-- Modal Creación de Cita -->
+<div id="modalCrear" class="modal-overlay">
+  <div class="modal-card">
+    <h3>Agendar Cita Médica</h3>
+    <form id="formCrearCita">
+      <div class="form-group">
+        <label>Doctor:</label>
+        <select id="docSelect" required></select>
+      </div>
+      <div class="form-group">
+        <label>Paciente:</label>
+        <select id="pacSelect" required></select>
+      </div>
+      <div class="form-group">
+        <label>Motivo:</label>
+        <input type="text" id="motivoCita" placeholder="Ej. Consulta de rutina" required>
+      </div>
+      <input type="hidden" id="horaInicio">
+      <input type="hidden" id="horaFin">
+      <div class="modal-actions">
+        <button type="button" class="btn-secondary" onclick="cerrarModales()">Cancelar</button>
+        <button type="submit" class="btn-primary">Guardar Cita</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+let calendar;
+
+document.addEventListener('DOMContentLoaded', async () => {
+  // Carga de catálogos
+  try {
+    const [doctores, pacientes] = await Promise.all([
+      fetch('/api/doctores').then(r => r.json()),
+      fetch('/api/pacientes').then(r => r.json())
+    ]);
+
+    const filtroDoc = document.getElementById('filtroDoctor');
+    const selectDoc = document.getElementById('docSelect');
+    const selectPac = document.getElementById('pacSelect');
+
+    doctores.forEach(d => {
+      filtroDoc.innerHTML += `<option value="${d.id}">${d.nombre} (${d.especialidad})</option>`;
+      selectDoc.innerHTML += `<option value="${d.id}">${d.nombre} (${d.especialidad})</option>`;
+    });
+
+    pacientes.forEach(p => {
+      selectPac.innerHTML += `<option value="${p.id}">${p.nombre}</option>`;
+    });
+  } catch (err) {
+    console.error("Error al cargar catálogos:", err);
+  }
+
+  // Inicialización de FullCalendar
+  const calendarEl = document.getElementById('calendar');
+  calendar = new FullCalendar.Calendar(calendarEl, {
+    initialView: 'timeGridWeek',
+    headerToolbar: {
+      left: 'prev,next today',
+      center: 'title',
+      right: 'dayGridMonth,timeGridWeek'
+    },
+    locale: 'es',
+    editable: true,
+    selectable: true,
+    allDaySlot: false,
+    slotMinTime: "07:00:00",
+    slotMaxTime: "20:00:00",
+    events: function(info, successCallback, failureCallback) {
+      const doctorId = document.getElementById('filtroDoctor').value;
+      let url = `/api/citas?desde=${info.startStr}&hasta=${info.endStr}`;
+      if (doctorId) url += `&doctor_id=${doctorId}`;
+
+      fetch(url)
+        .then(r => r.json())
+        .then(data => {
+          const events = data.map(c => ({
+            id: c.id,
+            title: `${c.paciente_nombre} - ${c.motivo}`,
+            start: c.fecha_inicio,
+            end: c.fecha_fin,
+            className: `estado-${c.estado}`,
+            extendedProps: {
+              doctor: c.doctor_nombre,
+              paciente: c.paciente_nombre,
+              motivo: c.motivo,
+              estado: c.estado
+            }
+          }));
+          successCallback(events);
+        })
+        .catch(err => failureCallback(err));
+    },
+    // RQF-01: Selección en calendario para agendar
+    select: function(info) {
+      document.getElementById('horaInicio').value = info.startStr.slice(0, 19).replace('T', ' ');
+      document.getElementById('horaFin').value = info.endStr.slice(0, 19).replace('T', ' ');
+      document.getElementById('modalCrear').style.display = 'flex';
+    },
+    // RQF-04: Drag and drop para reprogramar cita
+    eventDrop: function(info) {
+      const payload = {
+        fecha_inicio: info.event.start.toISOString().slice(0, 19).replace('T', ' '),
+        fecha_fin: info.event.end ? info.event.end.toISOString().slice(0, 19).replace('T', ' ') : info.event.start.toISOString().slice(0, 19).replace('T', ' ')
+      };
+
+      fetch(`/api/citas/${info.event.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      }).then(async res => {
+        if (!res.ok) {
+          const errorData = await res.json();
+          alert(errorData.error || 'No se pudo reprogramar la cita');
+          info.revert();
+        }
+      }).catch(() => info.revert());
+    },
+    // RQF-09 / RQF-05: Detalle y cambio de estado
+    eventClick: function(info) {
+      const p = info.event.extendedProps;
+      const mensaje = `Detalle de la Cita:\n\n` +
+                      `Paciente: ${p.paciente}\n` +
+                      `Doctor: ${p.doctor}\n` +
+                      `Motivo: ${p.motivo}\n` +
+                      `Estado Actual: ${p.estado.toUpperCase()}\n\n` +
+                      `Para cambiar el estado escriba una de las opciones:\n(confirmada / atendida / cancelada)`;
+      
+      const nuevoEstado = prompt(mensaje);
+      if (nuevoEstado) {
+        const estadoLimpio = nuevoEstado.trim().toLowerCase();
+        if (['pendiente', 'confirmada', 'atendida', 'cancelada'].includes(estadoLimpio)) {
+          fetch(`/api/citas/${info.event.id}/estado`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ estado: estadoLimpio })
+          }).then(res => {
+            if (res.ok) calendar.refetchEvents();
+            else alert("Error al actualizar el estado");
+          });
+        } else {
+          alert("Estado no válido");
+        }
+      }
+    }
+  });
+
+  calendar.render();
+});
+
+// Guardar nueva cita
+document.getElementById('formCrearCita').onsubmit = async (e) => {
+  e.preventDefault();
+  const payload = {
+    doctor_id: document.getElementById('docSelect').value,
+    paciente_id: document.getElementById('pacSelect').value,
+    motivo: document.getElementById('motivoCita').value,
+    fecha_inicio: document.getElementById('horaInicio').value,
+    fecha_fin: document.getElementById('horaFin').value
+  };
+
+  const res = await fetch('/api/citas', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+
+  if (res.ok) {
+    cerrarModales();
+    document.getElementById('motivoCita').value = '';
+    calendar.refetchEvents();
+  } else {
+    const errorData = await res.json();
+    alert(errorData.error || 'Error al agendar la cita');
+  }
+};
+
+function cerrarModales() {
+  document.getElementById('modalCrear').style.display = 'none';
+}
+</script>
+</body>
+</html>
