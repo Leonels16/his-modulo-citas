@@ -1,4 +1,12 @@
 <?php
+// Servir la interfaz si acceden a la raíz o a archivos de public/
+if (php_sapi_name() === 'cli-server') {
+    $path = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
+    if ($path === '/' || $path === '/index.html') {
+        readfile(__DIR__ . '/../public/index.html');
+        exit;
+    }
+}
 header('Content-Type: application/json; charset=utf-8');
 header("Access-Control-Allow-Origin: *");
 header("Access-Control-Allow-Methods: GET, POST, PUT, PATCH, OPTIONS");
