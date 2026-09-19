@@ -68,4 +68,24 @@ class CitaRepository {
     public function getPacientes() {
         return $this->db->query("SELECT * FROM pacientes")->fetchAll();
     }
+    public function existeConflicto($doctorId, $inicio, $fin, $excludeId = null) {
+        $sql = "SELECT COUNT(*) as total FROM citas 
+                WHERE doctor_id = ? 
+                AND estado != 'cancelada'
+                AND (fecha_inicio < ? AND fecha_fin > ?)";
+        $params = [$doctorId, $fin, $inicio];
+        if ($excludeId !== null) {
+            $sql .= " AND id != ?";
+            $params[] = $excludeId;
+        }
+        $stmt = $this->db->prepare($sql);
+        $stmt->execute($params);
+        $row = $stmt->fetch();
+        return ((int)$row['total']) > 0;
+    }
+
+    public function cambiarEstado($id, $estado) {
+        $stmt = $this->db->prepare("UPDATE citas SET estado = ? WHERE id = ?");
+        return $stmt->execute([$estado, $id]);
+    }
 }

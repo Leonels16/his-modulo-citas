@@ -45,6 +45,13 @@ if ($uri === '/api/citas') {
             exit;
         }
 
+        // Validación de no solapamiento / doble reserva (RQF-03, RQNF-07, RQNF-03)
+        if ($repo->existeConflicto($data['doctor_id'], $data['fecha_inicio'], $data['fecha_fin'])) {
+            http_response_code(409);
+            echo json_encode(['error' => 'Conflicto: El doctor ya tiene una cita programada en ese horario']);
+            exit;
+        }
+
         $id = $repo->create($data);
         http_response_code(201);
         echo json_encode(['id' => $id, 'mensaje' => 'Cita creada exitosamente']);
@@ -52,7 +59,26 @@ if ($uri === '/api/citas') {
     }
 }
 
-// Detalle y Reprogramar cita
+// Cambiar estado de la cita (PATCH /api/citas/{id}/estado)
+if (preg_match('#^/api/citas/(\d+)/estado$#', $uri, $matches)) {
+    if ($method === 'PATCH') {
+        $id = $matches[1];
+        $data = json_decode(file_get_contents('php://input'), true);
+        $estadosPermitidos = ['pendiente', 'confirmada', 'cancelada', 'atendida'];
+
+        if (empty($data['estado']) || !in_array($data['estado'], $estadosPermitidos)) {
+            http_response_code(400);
+            echo json_encode(['error' => 'Estado no valido. Debe ser: pendiente, confirmada, cancelada o atendida']);
+            exit;
+        }
+
+        $repo->cambiarEstado($id, $data['estado']);
+        echo json_encode(['mensaje' => 'Estado actualizado exitosamente [RQF-05]']);
+        exit;
+    }
+}
+
+// Detalle y Reprogramar cita (PUT /api/citas/{id})
 if (preg_match('#^/api/citas/(\d+)$#', $uri, $matches)) {
     $id = $matches[1];
 
@@ -74,8 +100,23 @@ if (preg_match('#^/api/citas/(\d+)$#', $uri, $matches)) {
             echo json_encode(['error' => 'Fechas requeridas']);
             exit;
         }
+
+        $citaActual = $repo->getById($id);
+        if (!$citaActual) {
+            http_response_code(404);
+            echo json_encode(['error' => 'Cita no encontrada']);
+            exit;
+        }
+
+        // Validación de conflicto al reprogramar excluyendo la misma cita
+        if ($repo->existeConflicto($citaActual['doctor_id'], $data['fecha_inicio'], $data['fecha_fin'], $id)) {
+            http_response_code(409);
+            echo json_encode(['error' => 'Conflicto: El doctor no tiene disponibilidad en ese horario']);
+            exit;
+        }
+
         $repo->updateHorario($id, $data['fecha_inicio'], $data['fecha_fin']);
-        echo json_encode(['mensaje' => 'Horario actualizado exitosamente']);
+        echo json_encode(['mensaje' => 'Horario actualizado exitosamente [RQF-04]']);
         exit;
     }
 }
